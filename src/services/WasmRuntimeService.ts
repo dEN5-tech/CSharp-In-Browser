@@ -88,11 +88,12 @@ export class WasmRuntimeService {
     this.notifyStatus('Fetching WebAssembly & BCL manifests...', false);
 
     return new Promise<void>((resolve, reject) => {
+      // Allow ample time for downloading ~22 MB of BCL assemblies on first visit
       const timeoutId = setTimeout(() => {
         if (!this.isInitialized) {
-          reject(new Error('Mono WebAssembly runtime initialization timed out after 30 seconds.'));
+          reject(new Error('Mono WebAssembly runtime initialization timed out after 180 seconds. Check network connection.'));
         }
-      }, 30000);
+      }, 180000);
 
       const checkAndBoot = () => {
         if (typeof window.MONO !== 'undefined' && typeof window.config !== 'undefined') {
@@ -215,7 +216,8 @@ namespace WasmRoslyn.Demo
 
   /**
    * Adapts standard Visual Studio Console Application code (static void Main)
-   * by prepending a Roslyn-compatible ConsoleHarness with Console.Out redirection.
+   * by safely partitioning using directives to the top of the compilation unit
+   * and prepending a Roslyn-compatible ConsoleHarness with Console.Out redirection.
    */
   private adaptCodeForExecution(userCode: string): string {
     // If the user already wrote a legacy RunClass with Task<string> Run(), leave it intact
@@ -223,85 +225,123 @@ namespace WasmRoslyn.Demo
       return userCode;
     }
 
-    // Prepend the Visual Studio Console Application bridge harness
-    const vsHarness = `namespace VisualStudioRunner
-{
-    public class ConsoleHarness
-    {
-        public async System.Threading.Tasks.Task<string> Run()
-        {
-            using (var writer = new System.IO.StringWriter())
-            {
-                var originalOut = System.Console.Out;
-                System.Console.SetOut(writer);
-                try
-                {
-                    var asm = this.GetType().Assembly;
-                    bool mainFound = false;
-                    foreach (var t in asm.GetTypes())
-                    {
-                        if (t != this.GetType())
-                        {
-                            var main = t.GetMethod("Main", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-                            if (main != null)
-                            {
-                                mainFound = true;
-                                var parameters = main.GetParameters();
-                                object result = null;
-                                if (parameters.Length == 0)
-                                {
-                                    result = main.Invoke(null, null);
-                                }
-                                else if (parameters.Length == 1 && parameters[0].ParameterType == typeof(string[]))
-                                {
-                                    result = main.Invoke(null, new object[] { new string[0] });
-                                }
+    // Extract top-level using directives so they appear before any class or namespace declarations (prevents CS1529)
+    const lines = userCode.split('\n');
+    const userUsings: string[] = [];
+    const sanitizedUserLines: string[] = [];
+    let insideNamespaceOrClass = false;
 
-                                if (result is System.Threading.Tasks.Task task)
-                                {
-                                    await task;
-                                }
-                                break;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      if (trimmed.startsWith('namespace ') || trimmed.startsWith('class ') || trimmed.startsWith('public class ') || trimmed.startsWith('internal class ')) {
+        insideNamespaceOrClass = true;
+      }
+
+      // If top-level using directive before any type/namespace
+      if (!insideNamespaceOrClass && /^using\s+[^;]+;\s*$/.test(trimmed)) {
+        userUsings.push(trimmed);
+        // Replace with empty line to keep exact line numbering matching Program.cs
+        sanitizedUserLines.push('// ' + trimmed);
+      } else {
+        sanitizedUserLines.push(line);
+      }
+    }
+
+    // Default essential namespaces + user-defined namespaces
+    const standardUsings = [
+      'using System;',
+      'using System.IO;',
+      'using System.Threading.Tasks;',
+      'using System.Reflection;',
+      'using System.Collections.Generic;',
+      'using System.Linq;',
+      'using Newtonsoft.Json;'
+    ];
+
+    const allUsingsSet = new Set<string>([...standardUsings, ...userUsings]);
+    const topUsingsHeader = Array.from(allUsingsSet).join('\n');
+
+    // Prepend the Visual Studio Console Application bridge harness
+    const vsHarness = `${topUsingsHeader}
+
+public class ConsoleHarness
+{
+    public async Task<string> Run()
+    {
+        using (var writer = new StringWriter())
+        {
+            var originalOut = Console.Out;
+            Console.SetOut(writer);
+            try
+            {
+                var asm = this.GetType().Assembly;
+                bool mainFound = false;
+                foreach (var t in asm.GetTypes())
+                {
+                    if (t != this.GetType())
+                    {
+                        var main = t.GetMethod("Main", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                        if (main != null)
+                        {
+                            mainFound = true;
+                            var parameters = main.GetParameters();
+                            object result = null;
+                            if (parameters.Length == 0)
+                            {
+                                result = main.Invoke(null, null);
                             }
+                            else if (parameters.Length == 1 && parameters[0].ParameterType == typeof(string[]))
+                            {
+                                result = main.Invoke(null, new object[] { new string[0] });
+                            }
+
+                            if (result is Task task)
+                            {
+                                await task;
+                            }
+                            break;
                         }
                     }
-
-                    if (!mainFound)
-                    {
-                        writer.WriteLine("[Visual Studio Runner Error]: Could not find 'static void Main(string[] args)' or 'static void Main()' entry point.");
-                    }
-                }
-                catch (System.Reflection.TargetInvocationException tie)
-                {
-                    writer.WriteLine("Unhandled Exception: " + tie.InnerException?.Message);
-                    if (tie.InnerException?.StackTrace != null)
-                    {
-                        writer.WriteLine(tie.InnerException.StackTrace);
-                    }
-                }
-                catch (System.Exception ex)
-                {
-                    writer.WriteLine("Unhandled Exception: " + ex.Message);
-                    if (ex.StackTrace != null)
-                    {
-                        writer.WriteLine(ex.StackTrace);
-                    }
-                }
-                finally
-                {
-                    System.Console.SetOut(originalOut);
                 }
 
-                string output = writer.ToString();
-                return string.IsNullOrEmpty(output) ? "[Program completed with no output (exit code 0)]" : output;
+                if (!mainFound)
+                {
+                    writer.WriteLine("[Visual Studio Runner Error]: Could not find 'static void Main(string[] args)' or 'static void Main()' entry point.");
+                }
             }
+            catch (TargetInvocationException tie)
+            {
+                writer.WriteLine("Unhandled Exception: " + tie.InnerException?.Message);
+                if (tie.InnerException?.StackTrace != null)
+                {
+                    writer.WriteLine(tie.InnerException.StackTrace);
+                }
+            }
+            catch (Exception ex)
+            {
+                writer.WriteLine("Unhandled Exception: " + ex.Message);
+                if (ex.StackTrace != null)
+                {
+                    writer.WriteLine(ex.StackTrace);
+                }
+            }
+            finally
+            {
+                Console.SetOut(originalOut);
+            }
+
+            string output = writer.ToString();
+            return string.IsNullOrEmpty(output) ? "[Program completed with no output (exit code 0)]" : output;
         }
     }
 }
+
 #line 1 "Program.cs"
 `;
 
-    return vsHarness + userCode;
+    return vsHarness + sanitizedUserLines.join('\n');
   }
 
   /**
