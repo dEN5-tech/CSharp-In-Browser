@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>C# In-Browser — Interactive Educational Stages</title>
+    <!-- Preload Mono WebAssembly Runtime Configuration -->
+    <script type="text/javascript" src="./mono-config.js"></script>
+    <script type="text/javascript">
+      window.Module = {
+        onRuntimeInitialized: function() {
+          console.log('[Mono Wasm] Native runtime initialized.');
+        }
+      };
+    </script>
+    <script type="text/javascript" src="./dotnet.js"></script>
+  </head>
+  <body>
+    <!-- Top Navbar -->
+    <header class="navbar">
+      <div class="brand">
+        <span class="brand-icon">⚡</span>
+        <span class="brand-title">C# In-Browser Academy</span>
+        <span class="brand-badge">Roslyn + Mono Wasm</span>
+      </div>
+      <div class="runtime-status-pill">
+        <span class="status-dot" id="runtime-status-dot"></span>
+        <span id="runtime-status-text">Booting WebAssembly VM...</span>
+      </div>
+    </header>
+
+    <!-- Main 3-Column Layout -->
+    <div class="app-container">
+      <!-- Left Column: Educational Curriculum Stages -->
+      <aside class="sidebar">
+        <div class="sidebar-header">Educational Stages</div>
+        <div class="stage-nav-list" id="stage-nav-mount"></div>
+      </aside>
+
+      <!-- Middle Column: Workspace, Instructions & Code Editor -->
+      <main class="editor-pane">
+        <!-- Stage Concept & Objective Box -->
+        <section class="stage-instruction-box" id="stage-details-mount"></section>
+
+        <!-- Editor Toolbar -->
+        <div class="editor-toolbar">
+          <div class="toolbar-group">
+            <button class="btn btn-primary" id="btn-run" disabled>
+              <span>▶ Compile & Run</span>
+              <kbd class="btn-shortcut">Ctrl+Enter</kbd>
+            </button>
+            <button class="btn btn-secondary" id="btn-compile" disabled>
+              <span>⚙ Compile Only</span>
+            </button>
+          </div>
+          <div class="toolbar-group">
+            <button class="btn btn-secondary" id="btn-reset-code" title="Reset starter code">Reset</button>
+            <button class="btn btn-secondary" id="btn-show-solution" title="Load working reference solution">Solution</button>
+            <button class="btn btn-secondary" id="btn-next-stage" title="Advance to next stage">Next ➔</button>
+          </div>
+        </div>
+
+        <!-- Code Editor Mount -->
+        <div class="editor-container" id="editor-container-mount"></div>
+      </main>
+
+      <!-- Right Column: Dual-Tab Output & Diagnostics Console -->
+      <section class="console-pane" id="console-container-mount"></section>
+    </div>
+
+    <!-- Vite TypeScript Entry -->
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
